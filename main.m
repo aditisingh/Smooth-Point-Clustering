@@ -22,6 +22,8 @@ addpath('./cut_pursuit/bin/')
 addpath('./func')
 addpath('../initial_clustering')
 
+W=43054;
+
 %----get labeling p1, p2 and p3--------------------------------------------
 p1_centroids=readNPY('GAD67_centroids.npy');
 p1_probability=readNPY('GAD67_probability.npy');
@@ -33,28 +35,28 @@ p3_centroids=readNPY('Glutaminase_centroids.npy');
 p3_probability=readNPY('Glutaminase_probability.npy');
 
 %----build the adjacency graph from ply file-------------------------------
-graph_p1 = build_graph_from_points(p1_centroids,10,0,0);
-graph_p2 = build_graph_from_points(p2_centroids,10,0,0);
-graph_p3 = build_graph_from_points(p3_centroids,10,0,0);
+graph_p1 = build_graph_from_points_new_new(p1_centroids,10,0,0,4);
+%graph_p2 = build_graph_from_points(p2_centroids,10,0,0);
+%graph_p3 = build_graph_from_points(p3_centroids,10,0,0);
 
 %---retrieve labeling with your favorite classifier------------------------
 %must be n_point x n _class probability float matrix
 initial_classif_p1 = p1_probability;
-initial_classif_p2 = p2_probability;
-initial_classif_p3 = p3_probability;
+%initial_classif_p2 = p2_probability;
+%initial_classif_p3 = p3_probability;
 
 %--------------------------------------------------------------------------
 %--------------- BENCHMARKING ---------------------------------------------
 %--------------------------------------------------------------------------
 
 %---Total Variation--------------------------------------------------------
-p1_kl_tv = PFDR(initial_classif_p1, graph_p1, 0.5, 2);
+p1_kl_tv = PFDR(initial_classif_p1, graph_p1, p1_centroids(:,1), 0.5, 1);
 [dump, l1_kl_tv] = max(p1_kl_tv,[],1);
 
-p2_kl_tv = PFDR(initial_classif_p2, graph_p2, 0.5, 2);
+p2_kl_tv = PFDR(initial_classif_p2, graph_p2, p2_centroids(:,1), 0.5, 2);
 [dump, l2_kl_tv] = max(p2_kl_tv,[],1);
 
-p3_kl_tv = PFDR(initial_classif_p3, graph_p3, 0.5, 2);
+p3_kl_tv = PFDR(initial_classif_p3, graph_p3, p3_centroids(:,1), 0.5, 2);
 [dump, l3_kl_tv] = max(p3_kl_tv,[],1);
 
 writeNPY(l1_kl_tv,'results/GAD67_labels_new.npy')

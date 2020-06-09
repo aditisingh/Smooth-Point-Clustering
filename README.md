@@ -28,6 +28,19 @@ Guinard, S., & Landrieu, L. In ISPRS 2017
 
 Fast segmentation of point clouds with L0-cut pursuit.
 
+## DEPENDENCIES:
+
+CUT PURSUIT : https://github.com/loicland/cut-pursuit
+
+PFDR : From https://github.com/1a7r0ch3
+
+ALPHA-EXPANSION / GCMEX : https://github.com/shaibagon/GCMex
+
+LOOPY BELIEF PROPAGATION : http://www.cs.ubc.ca/~schmidtm/Software/UGM.html
+
+All those dependencies are optional, but access to the corresponding regularization are dependant on which ones are installed. If you chose not to install some of those libraries, some code commenting might be necessary.
+
+The data compressed files needs to be dezipped. All credits goes to http://www.cs.cmu.edu/~vmr/datasets/oakland_3d/cvpr09/ for the data.
 
 ## RUNNING THE CODE:
 
