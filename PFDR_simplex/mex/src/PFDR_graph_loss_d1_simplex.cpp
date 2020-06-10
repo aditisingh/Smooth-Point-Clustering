@@ -17,6 +17,8 @@
 #include "../include/PFDR_graph_loss_d1_simplex.hpp"
 
 /* constants of the correct type */
+
+#define HALF_W ((real) 43054)
 #define ZERO ((real) 0.)
 #define ONE ((real) 1.)
 #define TWO ((real) 2.)
@@ -62,7 +64,7 @@ static void print_progress(char *msg, int it, int itMax, const real dif, \
 
 template<typename real>
 static void preconditioning(const int K, const int V, const int E, \
-    const real al, const real *P, const real *Q, \
+    const real al, const real *P, const real *Q,\
     const int *Eu, const int *Ev, const real *La_d1, \
     real *Ga, real *GaQ, real *Zu, real *Zv, real *Wu, real *Wv, \
     real *W_d1u, real *W_d1v, real *Th_d1, const real rho, const real condMin)
@@ -250,7 +252,7 @@ static void preconditioning(const int K, const int V, const int E, \
         #pragma omp parallel for private(v) num_threads(ntVK)
         for (v = 0; v < V*K; v++){ GaQ[v] = Ga[v]*(al_K + al_1*Q[v]); }
     }
-
+    // TILL HERE
     if (Zu != NULL){ /**  update auxiliary variables  **/
         #pragma omp parallel for private(e, i, u, v, k) num_threads(ntEK)
         for (e = 0; e < E; e++){
@@ -286,8 +288,8 @@ static void preconditioning(const int K, const int V, const int E, \
 
 template <typename real>
 void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
-    const real al, real *P, const real *Q, \
-    const int *Eu, const int *Ev, const real *La_d1, \
+    const real al, real *P, const real *Q, const real *X,  \
+    const int *Eu, const int *Ev, const real unsymm_penalty, const real *La_d1, \
     const real rho, const real condMin, \
     real difRcd, const real difTol, const int itMax, int *it, \
     real *Obj, real *Dif, const int verbose)
@@ -299,7 +301,7 @@ void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
     real a, b, c; /* general purpose temporary real scalars */
     const real one = ONE; /* argument for simplex projection */
     real al_K, al_1, al_K_al_1;
-    if (ZERO < al && al < ONE){ /* constants for KLa loss */
+    if (ZERO < al && al < ONE){ /* constants for KLa loss: smoothing case */
         al_K = al/K;
         al_1 = ONE - al;
         al_K_al_1 = al_K/al_1;
@@ -505,6 +507,7 @@ void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
             }
         }
 
+
         /** average **/
         for (v = 0; v < V*K; v++){ P[v] = ZERO; }
         /* this task cannot be easily parallelized along the edges */
@@ -517,6 +520,7 @@ void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
                 i += K;
             }
         }
+
 
         /**  projection on simplex  **/
         proj_simplex_metric<real>(P, Ga, K, V, V, &one, 1);
@@ -557,6 +561,61 @@ void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
             if (Dif != NULL){ Dif[it_] = dif; }
         }
 
+         /** reduce probability for unsymm clusters **/
+
+        real *count_neg = (real*) malloc(K*sizeof(real)); 
+        real *count_pos = (real*) malloc(K*sizeof(real)); 
+        real *count_ratio = (real*) malloc(K*sizeof(real)); 
+        
+        for (k = 0; k < K; k++){ count_neg[k] = ZERO; }
+        for (k = 0; k < K; k++){ count_pos[k] = ZERO; }
+
+        #pragma omp parallel for private(u, v, k, i, a) reduction(+:dif) num_threads(ntVK)
+        for(u=0; u < V; u++){
+            v=u*K;
+            float x_pt=X[u];
+            a = P[v];
+            i = 0;
+            for (k = 0; k < K; k++){
+                if (P[v+k] > a){
+                    a = P[v+k];
+                    i = k;
+                }   
+            }
+            if (x_pt>HALF_W){
+                count_pos[i]+=1;
+            }
+            else{
+                count_neg[i]+=1;
+            }
+            // i has max index  
+        }
+        for (k = 0; k < K; k++){ count_ratio[k] = count_neg[k]/(TENTH+count_pos[k]); }
+
+        #pragma omp parallel for private(u, v, k, i, a) reduction(+:dif) num_threads(ntVK)
+        for(u=0; u < V; u++){
+            v=u*K;
+            float x_pt=X[u];
+            a = P[v];
+            i = 0;
+            for (k = 0; k < K; k++){
+                if (P[v+k] > a){
+                    a = P[v+k];
+                    i = k;
+                }   
+            }
+            P[v+i]=count_ratio[i]>1?(P[v+i]/count_ratio[i]):(P[v+i]*count_ratio[i]);
+            P[v+i]=P[v+i]*unsymm_penalty;
+            float sum_P=0;
+            for (k = 0; k < K; k++){
+                sum_P+=P[v+k];
+            }
+            for (k = 0; k < K; k++){
+                P[v+k]=P[v+k]/sum_P;
+            }
+        }
+
+
         it_++;
     } /* endwhile (true) */
 
@@ -582,11 +641,11 @@ void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
 
 /* instantiate for compilation */
 template void PFDR_graph_loss_d1_simplex<float>(const int, const int, const int, \
-        const float, float*, const float*, const int*, const int*, \
+        const float, float*, const float*, const float*, const int*, const int*, const float,\
         const float*, const float, const float, float, const float, \
         const int, int*, float*, float*, const int);
 
 template void PFDR_graph_loss_d1_simplex<double>(const int, const int, const int, \
-        const double, double*, const double*, const int*, const int*, \
+        const double, double*, const double*, const double*, const int*, const int*, const double, \
         const double*, const double, const double, double, const double, \
         const int, int*, double*, double*, const int);

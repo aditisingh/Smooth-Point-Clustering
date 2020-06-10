@@ -1,4 +1,4 @@
-%        [P, it, Obj, Dif] = PFDR_graph_loss_d1_simplex_mex(Q, al, Eu, Ev, La_d1, rho, condMin, difRcd, difTol, itMax, verbose)
+%        [P, it, Obj, Dif] = PFDR_graph_loss_d1_simplex_mex(Q,x, al, Eu, Ev, La_d1, rho, condMin, difRcd, difTol, itMax, verbose)
 %
 % Minimize functionals on graphs of the form:
 %
@@ -14,6 +14,7 @@
 %
 % INPUTS: (warning: real numeric type is either single or double, not both)
 % Q        - observed probabilities, K-by-V array (real)
+% x        - x coordinates values, K-by-1 array (real)
 % al       - scalar defining the data-fidelity loss function
 %            al = 0, linear:
 %                      f(p) = - <q, p>,
