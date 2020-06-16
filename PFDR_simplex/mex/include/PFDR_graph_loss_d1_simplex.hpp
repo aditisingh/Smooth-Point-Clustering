@@ -22,13 +22,14 @@
 #define PFDR_GRAPH_LOSS_D1_SIMPLEX_H
 
 template <typename real>
-void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
-    const real al, real *P, const real *Q, const real *x, \
-    const int *Eu, const int *Ev, const real unsymm_penalty, const real *La_d1, \
+void PFDR_graph_loss_d1_simplex(const int nCh, const int K, int *V, int *E, \
+    const real al, real *P, real **Q, real *x, real *W, \
+    int **Eu, int **Ev, const real unsymm_penalty, real **La_d1, \
     const real rho, const real condMin, \
     real difRcd, const real difTol, const int itMax, int *it, \
     real *Obj, real *Dif, const int verbose);
 /* 18 arguments
+ * nCh - Number of channels
  * K, V, E  - number of classes, of vertices, of (undirected) edges
  * al       - scalar defining the data-fidelity loss function
  *            al = 0, linear:
@@ -48,14 +49,14 @@ void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
  *              we have KLa(q_v||p_v)
  *                  = - sum_{k} (a/K + (1-a)) q_v log(a/K + (1-a)p_v).
  * P        - minimizer, K-by-V array, column major format
- * Q        - observed probabilities, K-by-V array, column major format
- * x        - X coordinates of input points, V-by-1 array
- * Eu       - for each edge, index of one vertex, array of length E
- * Ev       - for each edge, index of the other vertex, array of length E
+ * Q        - Multiple observed probabilities, nch-by-K-by-V array, column major format
+ * x        - Multiple X coordinates of input points, nch-by-V-by-1 array
+ * Eu       - for each edge, index of one vertex, array of length nch-by-E
+ * Ev       - for each edge, index of the other vertex, array of length nch-by- E
  *            Every vertex should belong to at least one edge. If it is not the
  *            case, a workaround is to add an edge from the vertex to itself
  *            with a nonzero penalization coefficient.
- * La_d1    - d1 penalization coefficients for each edge, array of length E
+ * La_d1    - d1 penalization coefficients for each edge, array of length nch-by-E
  * unsymm_penalty - Penalization paramter for unsymmetric clusters across mid brain, values 0.0 to 1.0
  * rho      - relaxation parameter, 0 < rho < 2
  *            1 is a conservative value; 1.5 often speeds up convergence

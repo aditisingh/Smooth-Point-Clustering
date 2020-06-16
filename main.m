@@ -34,73 +34,97 @@ p2_probability=readNPY('GFAP_probability.npy');
 p3_centroids=readNPY('Glutaminase_centroids.npy');
 p3_probability=readNPY('Glutaminase_probability.npy');
 
-%----build the adjacency graph from ply file-------------------------------
-graph_p1 = build_graph_from_points_new_new(p1_centroids,10,0,0,4);
-%graph_p2 = build_graph_from_points(p2_centroids,10,0,0);
-%graph_p3 = build_graph_from_points(p3_centroids,10,0,0);
-
 %---retrieve labeling with your favorite classifier------------------------
 %must be n_point x n _class probability float matrix
 initial_classif_p1 = p1_probability;
+initial_classif_p2 = p2_probability;
+initial_classif_p3 = p3_probability;
+
+%----build the adjacency graph from ply file-------------------------------
+%graph_p1 = build_graph_from_points(p1_centroids,0,10,0,0,4);
+%graph_p2 = build_graph_from_points(p2_centroids,size(p1_centroids,1),10,0,0,4);
+%graph_p3 = build_graph_from_points(p3_centroids,size(p1_centroids,1)+size(p2_centroids,1),10,0,0,4);
+
+%---retrieve labeling with your favorite classifier------------------------
+%must be n_point x n _class probability float matrix
+%initial_classif_p1 = p1_probability;
 %initial_classif_p2 = p2_probability;
 %initial_classif_p3 = p3_probability;
 
+%---All combined ----------------------------------------------------------
+%all_data(1,1).x_centroids=p1_centroids(:,1);
+%all_data(1,1).name='GAD67';
+%all_data(1,1).initial_classif=initial_classif_p1;
+%all_data(1,1).graph=graph_p1;
+%all_data(1,1).weight=1.5;
+
+%all_data(2,1).x_centroids=p2_centroids(:,1);
+%all_data(2,1).name='GFAP';
+%all_data(2,1).initial_classif=initial_classif_p2;
+%all_data(2,1).graph=graph_p2;
+%all_data(2,1).weight=1.0;
+
+%all_data(3,1).x_centroids=p3_centroids(:,1);
+%all_data(3,1).name='Glutaminase';
+%all_data(3,1).initial_classif=initial_classif_p3;
+%all_data(3,1).graph=graph_p3;
+%all_data(3,1).weight=0.5;
 %--------------------------------------------------------------------------
 %--------------- BENCHMARKING ---------------------------------------------
-%--------------------------------------------------------------------------
+%------------------------- Total Variation --------------------------------
+%p_kl_tv = PFDR(all_data, 0.5, 1);
+%[dump, l_kl_tv] = max(p_kl_tv,[],1);
 
-%---Total Variation--------------------------------------------------------
-p1_kl_tv = PFDR(initial_classif_p1, graph_p1, p1_centroids(:,1), 0.5, 1);
-[dump, l1_kl_tv] = max(p1_kl_tv,[],1);
 
-p2_kl_tv = PFDR(initial_classif_p2, graph_p2, p2_centroids(:,1), 0.5, 2);
-[dump, l2_kl_tv] = max(p2_kl_tv,[],1);
 
-p3_kl_tv = PFDR(initial_classif_p3, graph_p3, p3_centroids(:,1), 0.5, 2);
-[dump, l3_kl_tv] = max(p3_kl_tv,[],1);
+for n_neighbor=25:10:25
+	for edge_mode=50:50:50
+		for dist_type= 2:1:3
+			%----build the adjacency graph from ply file-------------------------------
+			graph_p1 = build_graph_from_points(p1_centroids,0,n_neighbor,0,edge_mode,dist_type);
+			graph_p2 = build_graph_from_points(p2_centroids,size(p1_centroids,1),n_neighbor,0,edge_mode,dist_type);
+			graph_p3 = build_graph_from_points(p3_centroids,size(p1_centroids,1)+size(p2_centroids,1),n_neighbor,0,edge_mode,dist_type);
+			for w1=1.0:0.5:1.5
+				for w2=1.5:0.5:1.5
+					for w3=0.5:0.5:1.5
+						%---All combined ----------------------------------------------------------
+						all_data(1,1).x_centroids=p1_centroids(:,1);
+						all_data(1,1).name='GAD67'
+						all_data(1,1).initial_classif=initial_classif_p1;
+						all_data(1,1).graph=graph_p1;
+						all_data(1,1).weight=w1;
 
-writeNPY(l1_kl_tv,'results/GAD67_labels_new.npy')
-writeNPY(l2_kl_tv,'results/GFAP_labels_new.npy')
-writeNPY(l3_kl_tv,'results/Glutaminase_labels_new.npy')
+						all_data(2,1).x_centroids=p2_centroids(:,1);
+						all_data(2,1).name='	GFAP';
+						all_data(2,1).initial_classif=initial_classif_p2;
+						all_data(2,1).graph=graph_p2;
+						all_data(2,1).weight=w2;
 
-%--------------- COMBINE ALL ----------------------------------------------
-all_centroids=[p1_centroids;p2_centroids;p3_centroids];
-
-[neighbors1,distance1] = knnsearch(p3_centroids,p1_centroids,'K', 10+1);
-[neighbors2,distance2] = knnsearch(p3_centroids,p2_centroids,'K', 10+1);
-
-%remove the self edges
-neighbors1 = neighbors1(:,2:end);
-distance1  = distance1(:,2:end);
-neighbors2 = neighbors2(:,2:end);
-distance2  = distance2(:,2:end);
-
-%for all points in p1, get probability
-p13_probability=p3_probability(neighbors1,:);
-p23_probability=p3_probability(neighbors2,:);
-
-p13_probability=reshape(p13_probability,[],10,6);
-p23_probability=reshape(p23_probability,[],10,6);
-
-mean_p1=mean(p13_probability,2);
-mean_p2=mean(p23_probability,2);
-
-p1_probability_new=reshape(mean_p1,[],6);
-p2_probability_new=reshape(mean_p2,[],6);
-
-all_probability=[p1_probability_new;p2_probability_new;p3_probability];
-initial_classif=all_probability;
-
-for n_neighbor=10:20:100
-	for edge_mode=-100:50:100
-		for dist_type= 0:1:5
-			graph_full = build_graph_from_points_new_new(all_centroids,n_neighbor,0,edge_mode,dist_type);
-			for fidelity=0:1:3
-				p_kl_tv = PFDR(initial_classif, graph_full, 0.5, fidelity);
-				[dump, l_kl_tv] = max(p_kl_tv,[],1);
-				str_file=strcat('results/all_labels_',num2str(n_neighbor),'_',num2str(edge_mode),'_',num2str(dist_type),'_',num2str(fidelity))
-				writeNPY(l_kl_tv,strcat(str_file,'.npy'));
+						all_data(3,1).x_centroids=p3_centroids(:,1);
+						all_data(3,1).name='Glutaminase';
+						all_data(3,1).initial_classif=initial_classif_p3;
+						all_data(3,1).graph=graph_p3;
+						all_data(3,1).weight=w3;
+						%--------------------------------------------------------------------------
+						%------------------------- Total Variation --------------------------------
+						for lambda=0.0:0.5:1.0
+							for fidelity=0:1:3
+								str_file=strcat('results/labels_',num2str(n_neighbor),'_',num2str(edge_mode),'_',num2str(dist_type),'_',num2str(10*w1),'_',num2str(10*w2),'_',num2str(10*w3),'_',num2str(10*lambda),'_',num2str(fidelity),'.npy')
+								if isfile(str_file)
+								    disp('File exists')% File exists.
+								else
+								    % File does not exist.
+									disp('File does not exist');
+									str_file
+									p_kl_tv = PFDR(all_data, lambda, fidelity);
+									[dump, l_kl_tv] = max(p_kl_tv,[],1);
+									writeNPY(l_kl_tv,str_file);
+								end
+							end
+						end
+					end
+				end
 			end
 		end
 	end
-end
+end	

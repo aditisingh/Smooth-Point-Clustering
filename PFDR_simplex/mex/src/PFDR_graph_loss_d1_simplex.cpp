@@ -18,7 +18,7 @@
 
 /* constants of the correct type */
 
-#define HALF_W ((real) 43054)
+#define HALF_W ((real) 21527)
 #define ZERO ((real) 0.)
 #define ONE ((real) 1.)
 #define TWO ((real) 2.)
@@ -62,11 +62,16 @@ static void print_progress(char *msg, int it, int itMax, const real dif, \
     FLUSH;
 }
 
+
 template<typename real>
-static void preconditioning(const int K, const int V, const int E, \
-    const real al, const real *P, const real *Q,\
-    const int *Eu, const int *Ev, const real *La_d1, \
-    real *Ga, real *GaQ, real *Zu, real *Zv, real *Wu, real *Wv, \
+static void preconditioning(const int K, int V, const int V1, const int V2,\
+    const int V3, int E, const int E1, const int E2, const int E3, const real al, \
+    real *P, const real *Q1, const real *Q2, const real *Q3,\
+    const real W1, const real W2, const real W3,\
+    const int *Eu_1, const int *Eu_2, const int *Eu_3, \
+    const int *Ev_1, const int *Ev_2, const int *Ev_3, \
+    const real *La1_d1, const real *La2_d1, const real *La3_d1, real *Ga, \
+    real *GaQ, real *Zu, real *Zv, real *Wu, real *Wv, \
     real *W_d1u, real *W_d1v, real *Th_d1, const real rho, const real condMin)
 /* 20 arguments 
  * for initialization:
@@ -77,7 +82,13 @@ static void preconditioning(const int K, const int V, const int E, \
     /**  control the number of threads with Open MP  **/
     const int ntVK = compute_num_threads(V*K);
     const int ntEK = compute_num_threads(E*K);
-    const int ntKE = (ntEK < K) ? ntEK : K;
+    const int ntVK1 = compute_num_threads(V1*K);
+    const int ntEK1 = compute_num_threads(E1*K);
+    const int ntVK2 = compute_num_threads(V2*K);
+    const int ntEK2 = compute_num_threads(E2*K);
+    const int ntVK3 = compute_num_threads(V3*K);
+    const int ntEK3 = compute_num_threads(E3*K);
+    const int ntKE = (compute_num_threads((E1+E2+E3)*K) < K) ? compute_num_threads(K*(E1+E2+E3)): K;
 
     /**  initialize general variables  **/
     int u, v, e, k, i; /* index edges and vertices */
@@ -96,18 +107,22 @@ static void preconditioning(const int K, const int V, const int E, \
         if (al == ONE){ /* quadratic loss, GaQ is a backup for Ga */
             for (v = 0; v < V*K; v++){ Ga[v] = GaQ[v]; }
         }else if (al > ZERO){ /* KLa loss */
-            #pragma omp parallel for private(v) num_threads(ntVK)
-            for (v = 0; v < V*K; v++){ Ga[v] = GaQ[v]/(al_K + al_1*Q[v]); }
+            #pragma omp parallel for private(v) num_threads(ntVK1)
+            for (v = 0; v < V1*K; v++){ Ga[v] = GaQ[v]/(al_K + al_1*Q1[v]); }
+            #pragma omp parallel for private(v) num_threads(ntVK2)
+            for (v = 0; v < V2*K; v++){ Ga[v+V1*K] = GaQ[v+V1*K]/(al_K + al_1*Q2[v]); }
+            #pragma omp parallel for private(v) num_threads(ntVK3)
+            for (v = 0; v < V3*K; v++){ Ga[v+V1*K+V2*K] = GaQ[v+V1*K+V2*K]/(al_K + al_1*Q3[v]); }
         }else{ /* linear loss, GaQ = Ga*Q, but some Q are zero */
-            #pragma omp parallel for private(u, v, k, i, a) num_threads(ntVK)
-            for (u = 0; u < V; u++){
+            #pragma omp parallel for private(u, v, k, i, a) num_threads(ntVK1)
+            for (u = 0; u < V1; u++){
                 v = u*K;
                 /* use highest value of Q to improve accuracy */
                 i = 0;
-                a = Q[v];
+                a = Q1[v];
                 for (k = 1; k < K; k++){
-                    if (a < Q[v+k]){
-                        a = Q[v+k];
+                    if (a < Q1[v+k]){
+                        a = Q1[v+k];
                         i = k;
                     }
                 }
@@ -115,23 +130,93 @@ static void preconditioning(const int K, const int V, const int E, \
                 a = GaQ[v+i]/a/Ga[v+i];
                 for (k = 0; k < K; k++){ Ga[v+k] *= a; } 
             }
+            #pragma omp parallel for private(u, v, k, i, a) num_threads(ntVK2)
+            for (u = 0; u < V2; u++){
+                v = u*K;
+                /* use highest value of Q to improve accuracy */
+                i = 0;
+                a = Q2[v];
+                for (k = 1; k < K; k++){
+                    if (a < Q2[v+k]){
+                        a = Q2[v+k];
+                        i = k;
+                    }
+                }
+                /* retrieve normalization coefficient */
+                a = GaQ[v+i+V1*K]/a/Ga[v+i+V1*K];
+                for (k = 0; k < K; k++){ Ga[v+k+V1*K] *= a; } 
+            }
+            #pragma omp parallel for private(u, v, k, i, a) num_threads(ntVK3)
+            for (u = 0; u < V3; u++){
+                v = u*K;
+                /* use highest value of Q to improve accuracy */
+                i = 0;
+                a = Q3[v];
+                for (k = 1; k < K; k++){
+                    if (a < Q3[v+k]){
+                        a = Q3[v+k];
+                        i = k;
+                    }
+                }
+                /* retrieve normalization coefficient */
+                a = GaQ[v+i+V1*K+V2*K]/a/Ga[v+i+V1*K+V2*K];
+                for (k = 0; k < K; k++){ Ga[v+k+V1*K+V2*K] *= a; } 
+            }
         }
         /**  get the auxiliary subgradients  **/
-        #pragma omp parallel for private(e, i, u, v, k) num_threads(ntEK)
-        for (e = 0; e < E; e++){
-            u = Eu[e]*K;
-            v = Ev[e]*K;
+        #pragma omp parallel for private(e, i, u, v, k) num_threads(ntEK1)
+        for (e = 0; e < E1; e++){
+            u = Eu_1[e]*K;
+            v = Ev_1[e]*K;
             i = e*K;
             for (k = 0; k < K; k++){ 
                 if (al == ZERO){ /* linear loss, grad = -Q */
-                    Zu[i] = (Wu[i]/Ga[u])*(P[u] + GaQ[u] - Zu[i]);
-                    Zv[i] = (Wv[i]/Ga[v])*(P[v] + GaQ[v] - Zv[i]);
+                    Zu[i] = (Wu[i]/Ga[u])*(P[u] + W1*GaQ[u] - Zu[i]);
+                    Zv[i] = (Wv[i]/Ga[v])*(P[v] + W1*GaQ[v] - Zv[i]);
                 }else if (al == ONE){ /* quadratic loss, grad = P - Q */
-                    Zu[i] = (Wu[i]/Ga[u])*(P[u] - Ga[u]*(P[u] - Q[u]) - Zu[i]);
-                    Zv[i] = (Wv[i]/Ga[v])*(P[v] - Ga[v]*(P[v] - Q[v]) - Zv[i]);
+                    Zu[i] = (Wu[i]/Ga[u])*(P[u] - W1*Ga[u]*(P[u] - Q1[u]) - Zu[i]);
+                    Zv[i] = (Wv[i]/Ga[v])*(P[v] - W1*Ga[v]*(P[v] - Q1[v]) - Zv[i]);
                 }else{ /* dKLa/dp_k = -(a/K + (1-a)q_k)(1-a)/(a/K + (1-a)p_k) */
-                    Zu[i] = (Wu[i]/Ga[u])*(P[u] + GaQ[u]/(al_K_al_1 + P[u]) - Zu[i]);
-                    Zv[i] = (Wv[i]/Ga[v])*(P[v] + GaQ[v]/(al_K_al_1 + P[v]) - Zv[i]);
+                    Zu[i] = (Wu[i]/Ga[u])*(P[u] + W1*GaQ[u]/(al_K_al_1 + P[u]) - Zu[i]);
+                    Zv[i] = (Wv[i]/Ga[v])*(P[v] + W1*GaQ[v]/(al_K_al_1 + P[v]) - Zv[i]);
+                }
+                i++; u++; v++;
+            }
+        }
+        #pragma omp parallel for private(e, i, u, v, k) num_threads(ntEK2)
+        for (e = 0; e < E2; e++){
+            u = Eu_2[e]*K;
+            v = Ev_2[e]*K;
+            i = e*K;
+            for (k = 0; k < K; k++){ 
+                if (al == ZERO){ /* linear loss, grad = -Q */
+                    Zu[i] = (Wu[i]/Ga[u])*(P[u] + W2*GaQ[u] - Zu[i]);
+                    Zv[i] = (Wv[i]/Ga[v])*(P[v] + W2*GaQ[v] - Zv[i]);
+                }else if (al == ONE){ /* quadratic loss, grad = P - Q */
+                    Zu[i] = (Wu[i]/Ga[u])*(P[u] - W2*Ga[u]*(P[u] - Q2[u]) - Zu[i]);
+                    Zv[i] = (Wv[i]/Ga[v])*(P[v] - W2*Ga[v]*(P[v] - Q2[v]) - Zv[i]);
+                }else{ /* dKLa/dp_k = -(a/K + (1-a)q_k)(1-a)/(a/K + (1-a)p_k) */
+                    Zu[i] = (Wu[i]/Ga[u])*(P[u] + W2*GaQ[u]/(al_K_al_1 + P[u]) - Zu[i]);
+                    Zv[i] = (Wv[i]/Ga[v])*(P[v] + W2*GaQ[v]/(al_K_al_1 + P[v]) - Zv[i]);
+                }
+                i++; u++; v++;
+            }
+        }
+        #pragma omp parallel for private(e, i, u, v, k) num_threads(ntEK3)
+        for (e = 0; e < E3; e++){
+            u = Eu_3[e]*K;
+            v = Ev_3[e]*K;
+            i = e*K;
+            for (k = 0; k < K; k++){ 
+                if (al == ZERO){ /* linear loss, grad = -Q */
+                    Zu[i] = (Wu[i]/Ga[u])*(P[u] + W3*GaQ[u] - Zu[i]);
+                    Zv[i] = (Wv[i]/Ga[v])*(P[v] + W3*GaQ[v] - Zv[i]);
+                }else if (al == ONE){ /* quadratic loss, grad = P - Q */
+                    Zu[i] = (Wu[i]/Ga[u])*(P[u] - W3*Ga[u]*(P[u] - Q3[u]) - Zu[i]);
+                    Zv[i] = (Wv[i]/Ga[v])*(P[v] - W3*Ga[v]*(P[v] - Q3[v]) - Zv[i]);
+                }else{ /* dKLa/dp_k = -(a/K + (1-a)q_k)(1-a)/(a/K + (1-a)p_k) */
+                    Zu[i] = (Wu[i]/Ga[u])*(P[u] + W3*GaQ[u]/(al_K_al_1 + P[u]) - Zu[i]);
+                    Zv[i] = (Wv[i]/Ga[v])*(P[v] + W3*GaQ[v]/(al_K_al_1 + P[v]) - Zv[i]);
                 }
                 i++; u++; v++;
             }
@@ -144,10 +229,20 @@ static void preconditioning(const int K, const int V, const int E, \
     }else if (al == ONE){ /* quadratic loss, H = 1 */
         for (v = 0; v < V*K; v++){ Ga[v] = ONE; }
     }else{ /* d^2KLa/dp_k^2 = (a/K + (1-a)q_k)(1-a)^2/(a/K + (1-a)p_k)^2 */
-        #pragma omp parallel for private(v, a) num_threads(ntVK)
-        for (v = 0; v < V*K; v++){
+        #pragma omp parallel for private(v, a) num_threads(ntVK1)
+        for (v = 0; v < V1*K; v++){
             a = (al_K_al_1 + P[v]);
-            Ga[v] = (al_K + al_1*Q[v])/(a*a);
+            Ga[v] = (al_K + al_1*Q1[v])/(a*a);
+        }
+        #pragma omp parallel for private(v, a) num_threads(ntVK2)
+        for (v = 0; v < V2*K; v++){
+            a = (al_K_al_1 + P[v+V1*K]);
+            Ga[v+V1*K] = (al_K + al_1*Q2[v])/(a*a);
+        }
+        #pragma omp parallel for private(v, a) num_threads(ntVK3)
+        for (v = 0; v < V3*K; v++){
+            a = (al_K_al_1 + P[v+V1*K+V2*K]);
+            Ga[v+V1*K+V2*K] = (al_K + al_1*Q3[v])/(a*a);
         }
     }
 
@@ -162,16 +257,58 @@ static void preconditioning(const int K, const int V, const int E, \
     #pragma omp parallel for private(k, e, u, v, i, a) num_threads(ntKE)
     for (k = 0; k < K; k++){
         i = k;
-        for (e = 0; e < E; e++){
-            u = Eu[e]*K + k;
-            v = Ev[e]*K + k;
+        for (e = 0; e < E1; e++){
+            u = Eu_1[e]*K + k;
+            v = Ev_1[e]*K + k;
             if (Zu == NULL){ /* first preconditioning */
-                a = La_d1[e];
+                a = La1_d1[e];
             }else{ /* reconditioning */
                 a = P[u] - P[v];
                 if (a < ZERO){ a = -a; }
                 if (a < condMin){ a = condMin; }
-                a = La_d1[e]/a;
+                a = La1_d1[e]/a;
+            }
+            Aux[u] += a;
+            Aux[v] += a;
+            Wu[i] = a;
+            Wv[i] = a;
+            i += K;
+        }
+    }
+    #pragma omp parallel for private(k, e, u, v, i, a) num_threads(ntKE)
+    for (k = 0; k < K; k++){
+        i = k;
+        for (e = 0; e < E2; e++){
+            u = Eu_2[e]*K + k;
+            v = Ev_2[e]*K + k;
+            if (Zu == NULL){ /* first preconditioning */
+                a = La2_d1[e];
+            }else{ /* reconditioning */
+                a = P[u] - P[v];
+                if (a < ZERO){ a = -a; }
+                if (a < condMin){ a = condMin; }
+                a = La2_d1[e]/a;
+            }
+            Aux[u] += a;
+            Aux[v] += a;
+            Wu[i] = a;
+            Wv[i] = a;
+            i += K;
+        }
+    }
+    #pragma omp parallel for private(k, e, u, v, i, a) num_threads(ntKE)
+    for (k = 0; k < K; k++){
+        i = k;
+        for (e = 0; e < E3; e++){
+            u = Eu_3[e]*K + k;
+            v = Ev_3[e]*K + k;
+            if (Zu == NULL){ /* first preconditioning */
+                a = La3_d1[e];
+            }else{ /* reconditioning */
+                a = P[u] - P[v];
+                if (a < ZERO){ a = -a; }
+                if (a < condMin){ a = condMin; }
+                a = La3_d1[e]/a;
             }
             Aux[u] += a;
             Aux[v] += a;
@@ -188,10 +325,10 @@ static void preconditioning(const int K, const int V, const int E, \
     #pragma omp parallel for private(v) num_threads(ntVK)
     for (v = 0; v < V*K; v++){ Aux[v] = ONE/Aux[v]; }
     /* make splitting weights sum to unity */
-    #pragma omp parallel for private(e, i, u, v, k) num_threads(ntEK)
-    for (e = 0; e < E; e++){
-        u = Eu[e]*K;
-        v = Ev[e]*K;
+    #pragma omp parallel for private(e, i, u, v, k) num_threads(ntEK1)
+    for (e = 0; e < E1; e++){
+        u = Eu_1[e]*K;
+        v = Ev_1[e]*K;
         i = e*K;
         for (k = 0; k < K; k++){
             Wu[i] *= Aux[u];
@@ -199,7 +336,28 @@ static void preconditioning(const int K, const int V, const int E, \
             i++; u++; v++;
         }
     }
-
+    #pragma omp parallel for private(e, i, u, v, k) num_threads(ntEK2)
+    for (e = 0; e < E2; e++){
+        u = Eu_2[e]*K;
+        v = Ev_2[e]*K;
+        i = e*K;
+        for (k = 0; k < K; k++){
+            Wu[i] *= Aux[u];
+            Wv[i] *= Aux[v];
+            i++; u++; v++;
+        }
+    }
+    #pragma omp parallel for private(e, i, u, v, k) num_threads(ntEK3)
+    for (e = 0; e < E3; e++){
+        u = Eu_3[e]*K;
+        v = Ev_3[e]*K;
+        i = e*K;
+        for (k = 0; k < K; k++){
+            Wu[i] *= Aux[u];
+            Wv[i] *= Aux[v];
+            i++; u++; v++;
+        }
+    }
     /**  inverse the approximate of the Hessian  **/
     if (al > ZERO){
         #pragma omp parallel for private(v) num_threads(ntVK)
@@ -216,21 +374,63 @@ static void preconditioning(const int K, const int V, const int E, \
     }else if (al > ZERO){ /* KLa loss, Lk = max_{0<=p_k<=1} d^2KLa/dp_k^2
                            *              = (a/K + (1-a)q_k)(1-a)^2/(a/K)^2 */
         b = ONE/(al_K_al_1*al_K_al_1);
-        #pragma omp parallel for private(v, c) num_threads(ntVK)
-        for (v = 0; v < V*K; v++){
-            c = a/((al_K + al_1*Q[v])*b);
+        #pragma omp parallel for private(v, c) num_threads(ntVK1)
+        for (v = 0; v < V1*K; v++){
+            c = a/((al_K + al_1*Q1[v])*b);
             if (Ga[v] > c){ Ga[v] = c; }
+        }
+        #pragma omp parallel for private(v, c) num_threads(ntVK2)
+        for (v = 0; v < V2*K; v++){
+            c = a/((al_K + al_1*Q2[v])*b);
+            if (Ga[v+V1*K] > c){ Ga[v+V1*K] = c; }
+        }
+        #pragma omp parallel for private(v, c) num_threads(ntVK3)
+        for (v = 0; v < V3*K; v++){
+            c = a/((al_K + al_1*Q3[v])*b);
+            if (Ga[v+V1*K+V2*K] > c){ Ga[v+V1*K+V2*K] = c; }
         }
     } /* linear loss: L = infinity */
 
     /**  precompute some quantities  **/
     if (al > ZERO){ /* weights and thresholds for d1 prox */
-        #pragma omp parallel for private(e, i, u, v, k, a, b) num_threads(ntEK)
-        for (e = 0; e < E; e++){
-            u = Eu[e]*K;
-            v = Ev[e]*K;
+        #pragma omp parallel for private(e, i, u, v, k, a, b) num_threads(ntEK1)
+        for (e = 0; e < E1; e++){
+            u = Eu_1[e]*K;
+            v = Ev_1[e]*K;
             i = e*K;
-            a = La_d1[e];
+            a = La1_d1[e];
+            for (k = 0; k < K; k++){
+                W_d1u[i] = Wu[i]/Ga[u];
+                W_d1v[i] = Wv[i]/Ga[v];
+                b = W_d1u[i] + W_d1v[i];
+                Th_d1[i] = a*b/(W_d1u[i]*W_d1v[i]);
+                W_d1u[i] /= b;
+                W_d1v[i] /= b;
+                i++; u++; v++;
+            }
+        }
+        #pragma omp parallel for private(e, i, u, v, k, a, b) num_threads(ntEK2)
+        for (e = 0; e < E2; e++){
+            u = Eu_2[e]*K;
+            v = Ev_2[e]*K;
+            i = e*K;
+            a = La2_d1[e];
+            for (k = 0; k < K; k++){
+                W_d1u[i] = Wu[i]/Ga[u];
+                W_d1v[i] = Wv[i]/Ga[v];
+                b = W_d1u[i] + W_d1v[i];
+                Th_d1[i] = a*b/(W_d1u[i]*W_d1v[i]);
+                W_d1u[i] /= b;
+                W_d1v[i] /= b;
+                i++; u++; v++;
+            }
+        }
+        #pragma omp parallel for private(e, i, u, v, k, a, b) num_threads(ntEK3)
+        for (e = 0; e < E3; e++){
+            u = Eu_3[e]*K;
+            v = Ev_3[e]*K;
+            i = e*K;
+            a = La3_d1[e];
             for (k = 0; k < K; k++){
                 W_d1u[i] = Wu[i]/Ga[u];
                 W_d1v[i] = Wv[i]/Ga[v];
@@ -244,31 +444,77 @@ static void preconditioning(const int K, const int V, const int E, \
     } /* linear loss: weights are all 1/2 and thresholds are all 2 */
     /* metric and first order information */
     if (al == ZERO){ /* linear loss, grad = -Q */
-        #pragma omp parallel for private(v) num_threads(ntVK)
-        for (v = 0; v < V*K; v++){ GaQ[v] = Ga[v]*Q[v]; }
+        #pragma omp parallel for private(v) num_threads(ntVK1)
+        for (v = 0; v < V1*K; v++){ GaQ[v] = Ga[v]*Q1[v]; }
+        #pragma omp parallel for private(v) num_threads(ntVK2)
+        for (v = 0; v < V2*K; v++){ GaQ[v+V1*K] = Ga[v+V1*K]*Q2[v]; }
+        #pragma omp parallel for private(v) num_threads(ntVK3)
+        for (v = 0; v < V3*K; v++){ GaQ[v+V1*K+V2*K] = Ga[v+V1*K+V2*K]*Q3[v]; }
     }else if (al == ONE){ /* quadratic loss, GaQ is a backup for Ga */
         for (v = 0; v < V*K; v++){ GaQ[v] = Ga[v]; }
     }else{ /* dKLa/dp_k = -(a/K + (1-a)q_k)(1-a)/(a/K + (1-a)p_k) */
-        #pragma omp parallel for private(v) num_threads(ntVK)
-        for (v = 0; v < V*K; v++){ GaQ[v] = Ga[v]*(al_K + al_1*Q[v]); }
+        #pragma omp parallel for private(v) num_threads(ntVK1)
+        for (v = 0; v < V1*K; v++){ GaQ[v] = Ga[v]*(al_K + al_1*Q1[v]); }
+        #pragma omp parallel for private(v) num_threads(ntVK2)
+        for (v = 0; v < V2*K; v++){ GaQ[v+V1*K] = Ga[v+V1*K]*(al_K + al_1*Q2[v]); }
+        #pragma omp parallel for private(v) num_threads(ntVK3)
+        for (v = 0; v < V3*K; v++){ GaQ[v+V1*K+V2*K] = Ga[v+V1*K+V2*K]*(al_K + al_1*Q3[v]); }
     }
     // TILL HERE
     if (Zu != NULL){ /**  update auxiliary variables  **/
-        #pragma omp parallel for private(e, i, u, v, k) num_threads(ntEK)
-        for (e = 0; e < E; e++){
-            u = Eu[e]*K;
-            v = Ev[e]*K;
+        #pragma omp parallel for private(e, i, u, v, k) num_threads(ntEK1)
+        for (e = 0; e < E1; e++){
+            u = Eu_1[e]*K;
+            v = Ev_1[e]*K;
             i = e*K;
             for (k = 0; k < K; k++){ 
                 if (al == ZERO){ /* linear loss, grad = -Q */
-                    Zu[i] = P[u] + GaQ[u] - (Ga[u]/Wu[i])*Zu[i];
-                    Zv[i] = P[v] + GaQ[v] - (Ga[v]/Wv[i])*Zv[i];
+                    Zu[i] = P[u] + W1*GaQ[u] - (Ga[u]/Wu[i])*Zu[i];
+                    Zv[i] = P[v] + W1*GaQ[v] - (Ga[v]/Wv[i])*Zv[i];
                 }else if (al == ONE){ /* quadratic loss, grad = P - Q */
-                    Zu[i] = P[u] - Ga[u]*(P[u] - Q[u] + Zu[i]/Wu[i]);
-                    Zv[i] = P[v] - Ga[v]*(P[v] - Q[v] + Zv[i]/Wv[i]);
+                    Zu[i] = P[u] - W1*Ga[u]*(P[u] - Q1[u] + Zu[i]/Wu[i]);
+                    Zv[i] = P[v] - W1*Ga[v]*(P[v] - Q1[v] + Zv[i]/Wv[i]);
                 }else{ /* dKLa/dp_k = -(a/K + (1-a)q_k)(1-a)/(a/K + (1-a)p_k) */
-                    Zu[i] = P[u] + GaQ[u]/(al_K_al_1 + P[u]) - (Ga[u]/Wu[i])*Zu[i];
-                    Zv[i] = P[v] + GaQ[v]/(al_K_al_1 + P[v]) - (Ga[v]/Wv[i])*Zv[i];
+                    Zu[i] = P[u] + W1*GaQ[u]/(al_K_al_1 + P[u]) - (Ga[u]/Wu[i])*Zu[i];
+                    Zv[i] = P[v] + W1*GaQ[v]/(al_K_al_1 + P[v]) - (Ga[v]/Wv[i])*Zv[i];
+                }
+                i++; u++; v++;
+            }
+        }
+        #pragma omp parallel for private(e, i, u, v, k) num_threads(ntEK2)
+        for (e = 0; e < E2; e++){
+            u = Eu_2[e]*K;
+            v = Ev_2[e]*K;
+            i = e*K;
+            for (k = 0; k < K; k++){ 
+                if (al == ZERO){ /* linear loss, grad = -Q */
+                    Zu[i] = P[u] + W2*GaQ[u] - (Ga[u]/Wu[i])*Zu[i];
+                    Zv[i] = P[v] + W2*GaQ[v] - (Ga[v]/Wv[i])*Zv[i];
+                }else if (al == ONE){ /* quadratic loss, grad = P - Q */
+                    Zu[i] = P[u] - W2*Ga[u]*(P[u] - Q2[u] + Zu[i]/Wu[i]);
+                    Zv[i] = P[v] - W2*Ga[v]*(P[v] - Q2[v] + Zv[i]/Wv[i]);
+                }else{ /* dKLa/dp_k = -(a/K + (1-a)q_k)(1-a)/(a/K + (1-a)p_k) */
+                    Zu[i] = P[u] + W2*GaQ[u]/(al_K_al_1 + P[u]) - (Ga[u]/Wu[i])*Zu[i];
+                    Zv[i] = P[v] + W2*GaQ[v]/(al_K_al_1 + P[v]) - (Ga[v]/Wv[i])*Zv[i];
+                }
+                i++; u++; v++;
+            }
+        }
+        #pragma omp parallel for private(e, i, u, v, k) num_threads(ntEK3)
+        for (e = 0; e < E3; e++){
+            u = Eu_3[e]*K;
+            v = Ev_3[e]*K;
+            i = e*K;
+            for (k = 0; k < K; k++){ 
+                if (al == ZERO){ /* linear loss, grad = -Q */
+                    Zu[i] = P[u] + W3*GaQ[u] - (Ga[u]/Wu[i])*Zu[i];
+                    Zv[i] = P[v] + W3*GaQ[v] - (Ga[v]/Wv[i])*Zv[i];
+                }else if (al == ONE){ /* quadratic loss, grad = P - Q */
+                    Zu[i] = P[u] - W3*Ga[u]*(P[u] - Q3[u] + Zu[i]/Wu[i]);
+                    Zv[i] = P[v] - W3*Ga[v]*(P[v] - Q3[v] + Zv[i]/Wv[i]);
+                }else{ /* dKLa/dp_k = -(a/K + (1-a)q_k)(1-a)/(a/K + (1-a)p_k) */
+                    Zu[i] = P[u] + W3*GaQ[u]/(al_K_al_1 + P[u]) - (Ga[u]/Wu[i])*Zu[i];
+                    Zv[i] = P[v] + W3*GaQ[v]/(al_K_al_1 + P[v]) - (Ga[v]/Wv[i])*Zv[i];
                 }
                 i++; u++; v++;
             }
@@ -287,54 +533,127 @@ static void preconditioning(const int K, const int V, const int E, \
 }
 
 template <typename real>
-void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
-    const real al, real *P, const real *Q, const real *X,  \
-    const int *Eu, const int *Ev, const real unsymm_penalty, const real *La_d1, \
+void PFDR_graph_loss_d1_simplex(const int nCh, const int K, int *V, int* E, \
+    const real al, real *P, real **Q, real *X, real *W, \
+    int **Eu, int **Ev, const real unsymm_penalty, real **La_d1, \
     const real rho, const real condMin, \
     real difRcd, const real difTol, const int itMax, int *it, \
     real *Obj, real *Dif, const int verbose)
 /* 18 arguments */
-{
+{   
     /***  initialize general variables  ***/
     if (verbose){ printf("Initializing constants and variables... "); FLUSH; }
     int u, v, e, i, k; /* index edges and vertices */
     real a, b, c; /* general purpose temporary real scalars */
     const real one = ONE; /* argument for simplex projection */
     real al_K, al_1, al_K_al_1;
-    if (ZERO < al && al < ONE){ /* constants for KLa loss: smoothing case */
+    if (ZERO < al && al < ONE){  //constants for KLa loss: smoothing case 
         al_K = al/K;
         al_1 = ONE - al;
         al_K_al_1 = al_K/al_1;
     }
 
     /***  control the number of threads with Open MP  ***/
-    const int ntVK = compute_num_threads(V*K);
-    const int ntEK = compute_num_threads(E*K);
-    const int ntKE = (ntEK < K) ? ntEK : K;
+    const int V1 = V[0];
+    const int V2 = V[1];
+    const int V3 = V[2];
+    // printf("V1= %d, V2= %d, V3=%d\n", V1, V2, V3 );
+
+    // for(int i=0;i<nCh;i++){
+    //     printf("val=%d \n",V[i] ); FLUSH; 
+    // }
+
+    const real W1=W[0];
+    const real W2=W[1];
+    const real W3=W[2];
+    // printf("V1= %d, V2= %d, V3=%d\n", V1, V2, V3 );
+
+    // for(int i=0;i<nCh;i++){
+    //     printf("val=%f \n",W[i] ); FLUSH; 
+    // }
+
+    int *Eu_1=Eu[0];
+    int *Eu_2=Eu[1];
+    int *Eu_3=Eu[2];
+
+    int *Ev_1=Ev[0];
+    int *Ev_2=Ev[1];
+    int *Ev_3=Ev[2];
+
+    real *La1_d1=La_d1[0];
+    real *La2_d1=La_d1[1];
+    real *La3_d1=La_d1[2];
+
+    real *Q1=Q[0];
+    real *Q2=Q[1];
+    real *Q3=Q[2];
+
+    const int E1 = E[0];
+    const int E2 = E[1];
+    const int E3 = E[2];
+
+    const int ntVK1 = compute_num_threads(V1*K);
+    const int ntEK1 = compute_num_threads(E1*K);
+    
+    const int ntVK2 = compute_num_threads(V2*K);
+    const int ntEK2 = compute_num_threads(E2*K);
+    
+    const int ntVK3 = compute_num_threads(V3*K);
+    const int ntEK3 = compute_num_threads(E3*K);
+
+    const int ntKE = (compute_num_threads((E1+E2+E3)*K) < K) ? compute_num_threads(K*(E1+E2+E3)): K;
+
+    const int ntVK = compute_num_threads((V1+V2+V3)*K);
 
     /**  allocates general purpose arrays  **/
-    real *Ga = (real*) malloc(K*V*sizeof(real)); /* descent metric */
-    real *GaQ = (real*) malloc(K*V*sizeof(real)); /* metric and first order information */
-    /* auxiliary variables for generalized forward-backward */
-    real *Zu = (real*) malloc(K*E*sizeof(real));
-    real *Zv = (real*) malloc(K*E*sizeof(real));
+    real *Ga = (real*) malloc(K*(V1+V2+V3)*sizeof(real));/* descent metric */
+    real *GaQ = (real*) malloc(K*(V1+V2+V3)*sizeof(real)); /* metric and first order information */
+
+     // auxiliary variables for generalized forward-backward 
+    real *Zu = (real*) malloc(K*(E1+E2+E3)*sizeof(real));
+    real *Zv = (real*) malloc(K*(E1+E2+E3)*sizeof(real));
+    
     /* splitting weights for generalized forward-backward */
-    real *Wu = (real*) malloc(K*E*sizeof(real));
-    real *Wv = (real*) malloc(K*E*sizeof(real));
+    real *Wu = (real*) malloc(K*(E1+E2+E3)*sizeof(real));
+    real *Wv = (real*) malloc(K*(E1+E2+E3)*sizeof(real));
+    
     real *W_d1u, *W_d1v, *Th_d1;
+
     if (al > ZERO){ /* weights and thresholds for d1 prox */
-        W_d1u = (real*) malloc(K*E*sizeof(real));
-        W_d1v = (real*) malloc(K*E*sizeof(real));
-        Th_d1 = (real*) malloc(K*E*sizeof(real));
+        W_d1u = (real*) malloc(K*(E1+E2+E3)*sizeof(real));
+        W_d1v = (real*) malloc(K*(E1+E2+E3)*sizeof(real));
+        Th_d1 = (real*) malloc(K*(E1+E2+E3)*sizeof(real));
     }else{
         W_d1u = W_d1v = Th_d1 = NULL;
     }
     /* initialize p *//* assumed already initialized */
     /* initialize, for all i, z_i = x */
-    #pragma omp parallel for private(e, u, v, k, i) num_threads(ntEK)
-    for (e = 0; e < E; e++){
-        u = Eu[e]*K;
-        v = Ev[e]*K;
+    #pragma omp parallel for private(e, u, v, k, i) num_threads(ntEK1)
+    for (e = 0; e < E1; e++){
+        u = Eu_1[e]*K;
+        v = Ev_1[e]*K;
+        i = e*K;
+        for (k = 0; k < K; k++){
+            Zu[i] = P[u];
+            Zv[i] = P[v];
+            i++; u++; v++;
+        }
+    }
+    #pragma omp parallel for private(e, u, v, k, i) num_threads(ntEK2)
+    for (e = 0; e < E2; e++){
+        u = Eu_2[e]*K;
+        v = Ev_2[e]*K;
+        i = e*K;
+        for (k = 0; k < K; k++){
+            Zu[i] = P[u];
+            Zv[i] = P[v];
+            i++; u++; v++;
+        }
+    }
+    #pragma omp parallel for private(e, u, v, k, i) num_threads(ntEK3)
+    for (e = 0; e < E3; e++){
+        u = Eu_3[e]*K;
+        v = Ev_3[e]*K;
         i = e*K;
         for (k = 0; k < K; k++){
             Zu[i] = P[u];
@@ -346,8 +665,10 @@ void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
 
     /***  preconditioning  ***/
     if (verbose){ printf("Preconditioning... "); FLUSH; }
-    preconditioning<real>(K, V, E, al, P, Q, Eu, Ev, La_d1, Ga, GaQ, \
-                      NULL, NULL, Wu, Wv, W_d1u, W_d1v, Th_d1, rho, condMin);
+
+    preconditioning<real>(K, V1+V2+V3, V1, V2, V3, E1+E2+E3, E1, E2, E3, al, P, Q1, Q2, Q3,\
+                         W1, W2, W3,Eu_1,Eu_2, Eu_3, Ev_1, Ev_2, Ev_3, La1_d1, La2_d1, La3_d1, Ga, \
+                         GaQ, NULL, NULL, Wu, Wv, W_d1u, W_d1v, Th_d1, rho, condMin);
     if (verbose){ printf("done.\n"); FLUSH; }
 
     /***  forward-Douglas-Rachford  ***/
@@ -359,10 +680,10 @@ void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
     dif = (difTol > difRcd) ? difTol : difRcd;
     if (difTol > ZERO || difRcd > ZERO || Dif != NULL){
         if (difTol >= ONE){
-            P_ = (real*) malloc(V*sizeof(real));
+            P_ = (real*) malloc((V1+V2+V3)*sizeof(real));
             /* compute maximum-likelihood labels */
             #pragma omp parallel for private(u, v, k, a) num_threads(ntVK)
-            for (u = 0; u < V; u++){
+            for (u = 0; u < (V1+V2+V3); u++){
                 v = u*K;
                 a = P[v];
                 P_[u] = (real) 0;
@@ -374,8 +695,8 @@ void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
                 }
             }
         }else{
-            P_ = (real*) malloc(K*V*sizeof(real));
-            for (v = 0; v < K*V; v++){ P_[v] = P[v]; }
+            P_ = (real*) malloc(K*(V1+V2+V3)*sizeof(real));
+            for (v = 0; v < K*(V1+V2+V3); v++){ P_[v] = P[v]; }
         }
     }
     if (verbose){
@@ -390,23 +711,57 @@ void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
         if (Obj != NULL){ 
             a = ZERO;
             if (al == ZERO){ /* linear loss */
-                #pragma omp parallel for private(v) reduction(+:a) num_threads(ntVK)
-                for (v = 0; v < V*K; v++){ a -= P[v]*Q[v]; }
+                #pragma omp parallel for private(v) reduction(+:a) num_threads(ntVK1)
+                for (v = 0; v < V1*K; v++){ a -= W1*P[v]*Q1[v]; }
+                #pragma omp parallel for private(v) reduction(+:a) num_threads(ntVK2)
+                for (v = 0; v < V2*K; v++){ a -= W2*P[V1*K+v]*Q2[v]; }
+                #pragma omp parallel for private(v) reduction(+:a) num_threads(ntVK3)
+                for (v = 0; v < V3*K; v++){ a -= W3*P[v+V1*K+V2*K]*Q3[v]; }
             }else if (al == ONE){ /* quadratic loss */
-                #pragma omp parallel for private(v, c) reduction(+:a) num_threads(ntVK)
-                for (v = 0; v < V*K; v++){
-                    c = P[v] - Q[v];
-                    a += c*c;
+                #pragma omp parallel for private(v, c) reduction(+:a) num_threads(ntVK1)
+                for (v = 0; v < V1*K; v++){
+                    c = P[v] - Q1[v];
+                    a += W1*c*c;
+                }
+                #pragma omp parallel for private(v, c) reduction(+:a) num_threads(ntVK2)
+                for (v = 0; v < V2*K; v++){
+                    c = P[V1*K+v] - Q2[v];
+                    a += W2*c*c;
+                }
+                #pragma omp parallel for private(v, c) reduction(+:a) num_threads(ntVK3)
+                for (v = 0; v < V3*K; v++){
+                    c = P[V1*K+V2*K+v] - Q3[v];
+                    a += W2*c*c;
                 }
                 a *= HALF;
             }else{ /* KLa loss */
-                #pragma omp parallel for private(u, v, k, c) reduction(+:a) num_threads(ntVK)
-                for (u = 0; u < V; u++){
+                #pragma omp parallel for private(u, v, k, c) reduction(+:a) num_threads(ntVK1)
+                for (u = 0; u < V1; u++){
                     v = u*K;
                     /* KLa(p,x) = sum_k (a/K + (1-a)q_k) log((a/K + (1-a)q_k)/(a/K + (1-a)p_k)) */
                     for (k = 1; k < K; k++){
-                        c = al_K + al_1*Q[v];
-                        a += c*log(c/(al_K + al_1*P[v]));
+                        c = al_K + al_1*Q1[v];
+                        a += W1*c*log(c/(al_K + al_1*P[v]));
+                        v++;
+                    }
+                }
+                #pragma omp parallel for private(u, v, k, c) reduction(+:a) num_threads(ntVK2)
+                for (u = 0; u < V2; u++){
+                    v = u*K;
+                    /* KLa(p,x) = sum_k (a/K + (1-a)q_k) log((a/K + (1-a)q_k)/(a/K + (1-a)p_k)) */
+                    for (k = 1; k < K; k++){
+                        c = al_K + al_1*Q2[v];
+                        a += W2*c*log(c/(al_K + al_1*P[v+V1*K]));
+                        v++;
+                    }
+                }
+                #pragma omp parallel for private(u, v, k, c) reduction(+:a) num_threads(ntVK3)
+                for (u = 0; u < V3; u++){
+                    v = u*K;
+                    /* KLa(p,x) = sum_k (a/K + (1-a)q_k) log((a/K + (1-a)q_k)/(a/K + (1-a)p_k)) */
+                    for (k = 1; k < K; k++){
+                        c = al_K + al_1*Q3[v];
+                        a += W3*c*log(c/(al_K + al_1*P[v+V1*K+V2*K]));
                         v++;
                     }
                 }
@@ -414,10 +769,10 @@ void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
             Obj[it_] = a;
             /* ||x||_{d1,La_d1} */
             a = ZERO;
-            #pragma omp parallel for private(e, u, v, b, c) reduction(+:a) num_threads(ntEK)
-            for (e = 0; e < E; e++){
-                u = Eu[e]*K;
-                v = Ev[e]*K;
+            #pragma omp parallel for private(e, u, v, b, c) reduction(+:a) num_threads(ntEK1)
+            for (e = 0; e < E1; e++){
+                u = Eu_1[e]*K;
+                v = Ev_1[e]*K;
                 b = ZERO;
                 for (k = 0; k < K; k++){
                     c = P[u] - P[v];
@@ -425,11 +780,37 @@ void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
                     b += c;
                     u++; v++;
                 }
-                a += La_d1[e]*b;
+                a += La1_d1[e]*b;
+            }
+            #pragma omp parallel for private(e, u, v, b, c) reduction(+:a) num_threads(ntEK2)
+            for (e = 0; e < E2; e++){
+                u = Eu_2[e]*K;
+                v = Ev_2[e]*K;
+                b = ZERO;
+                for (k = 0; k < K; k++){
+                    c = P[u] - P[v];
+                    if (c < ZERO){ c = -c; }
+                    b += c;
+                    u++; v++;
+                }
+                a += La2_d1[e]*b;
+            }
+            #pragma omp parallel for private(e, u, v, b, c) reduction(+:a) num_threads(ntEK3)
+            for (e = 0; e < E3; e++){
+                u = Eu_3[e]*K;
+                v = Ev_3[e]*K;
+                b = ZERO;
+                for (k = 0; k < K; k++){
+                    c = P[u] - P[v];
+                    if (c < ZERO){ c = -c; }
+                    b += c;
+                    u++; v++;
+                }
+                a += La3_d1[e]*b;
             }
             Obj[it_] += a;
         }
-
+        ///done till here
         /**  progress and stopping criterion  **/
         if (verbose && itMsg++ == verbose){
             print_progress<real>(msg, it_, itMax, dif, difTol, difRcd);
@@ -445,29 +826,138 @@ void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
                 FLUSH;
                 msg[0] = '\0';
             }
-            preconditioning<real>(K, V, E, al, P, Q, Eu, Ev, La_d1, Ga, GaQ, \
-                            Zu, Zv, Wu, Wv, W_d1u, W_d1v, Th_d1, rho, condMin);
+            preconditioning<real>(K, V1+V2+V3, V1, V2, V3, E1+E2+E3, E1, E2, E3, al, P, Q1, Q2, Q3,\
+                        W1, W2, W3, Eu_1, Eu_2, Eu_3, Ev_1, Ev_2, Ev_3, La1_d1, La2_d1, La3_d1, Ga, \
+                         GaQ, Zu, Zv, Wu, Wv, W_d1u, W_d1v, Th_d1, rho, condMin);
             difRcd *= TENTH;
             if (verbose){ printf("done.\n"); FLUSH; }
         }
 
         /**  forward and backward steps on auxiliary variables  **/
-        #pragma omp parallel for private(e, u, v, k, i, a, b, c) num_threads(ntEK)
-        for (e = 0; e < E; e++){
-            u = Eu[e]*K;
-            v = Ev[e]*K;
+        #pragma omp parallel for private(e, u, v, k, i, a, b, c) num_threads(ntEK1)
+        for (e = 0; e < E1; e++){
+            u = Eu_1[e]*K;
+            v = Ev_1[e]*K;
             i = e*K;
             for (k = 0; k < K; k++){
                 /* explicit step */
                 if (al == ZERO){ /* linear loss, grad = -Q */
-                    a = TWO*P[u] + GaQ[u] - Zu[i];
-                    b = TWO*P[v] + GaQ[v] - Zv[i];
+                    a = TWO*P[u] + W1*GaQ[u] - Zu[i];
+                    b = TWO*P[v] + W1*GaQ[v] - Zv[i];
                 }else if (al == ONE){ /* quadratic loss, grad = P - Q */
-                    a = TWO*P[u] - GaQ[u]*(P[u] - Q[u]) - Zu[i];
-                    b = TWO*P[v] - GaQ[v]*(P[v] - Q[v]) - Zv[i];
+                    a = TWO*P[u] - W1*GaQ[u]*(P[u] - Q1[u]) - Zu[i];
+                    b = TWO*P[v] - W1*GaQ[v]*(P[v] - Q1[v]) - Zv[i];
                 }else{ /* dKLa/dp_k = -(a/K + (1-a)q_k)(1-a)/(a/K + (1-a)p_k) */
-                    a = TWO*P[u] + GaQ[u]/(al_K_al_1 + P[u]) - Zu[i];
-                    b = TWO*P[v] + GaQ[v]/(al_K_al_1 + P[v]) - Zv[i];
+                    a = TWO*P[u] + W1*GaQ[u]/(al_K_al_1 + P[u]) - Zu[i];
+                    b = TWO*P[v] + W1*GaQ[v]/(al_K_al_1 + P[v]) - Zv[i];
+                }
+                /* implicit step */
+                if (al == ZERO){ /* weights are all 1/2 and thresholds are all 2 */
+                    c = HALF*(a + b); /* weighted average */
+                    a = a - b; /* finite difference */
+                    /* soft thresholding, update and relaxation */
+                    if (a > TWO){
+                        a = HALF*(a - TWO);
+                        Zu[i] += rho*(c + a - P[u]);
+                        Zv[i] += rho*(c - a - P[v]);
+                    }else if (a < -TWO){
+                        a = HALF*(a + TWO);
+                        Zu[i] += rho*(c + a - P[u]);
+                        Zv[i] += rho*(c - a - P[v]);
+                    }else{
+                        Zu[i] += rho*(c - P[u]);
+                        Zv[i] += rho*(c - P[v]);
+                    }
+                }else{
+                    c = W_d1u[i]*a + W_d1v[i]*b; /* weighted average */
+                    a = a - b; /* finite difference */
+                    /* soft thresholding, update and relaxation */
+                    if (a > Th_d1[i]){
+                        a -= Th_d1[i];
+                        Zu[i] += rho*(c + W_d1v[i]*a - P[u]);
+                        Zv[i] += rho*(c - W_d1u[i]*a - P[v]);
+                    }else if (a < -Th_d1[i]){
+                        a += Th_d1[i];
+                        Zu[i] += rho*(c + W_d1v[i]*a - P[u]);
+                        Zv[i] += rho*(c - W_d1u[i]*a - P[v]);
+                    }else{
+                        Zu[i] += rho*(c - P[u]);
+                        Zv[i] += rho*(c - P[v]);
+                    }
+                }
+                i++; u++; v++;
+            }
+        }
+        #pragma omp parallel for private(e, u, v, k, i, a, b, c) num_threads(ntEK2)
+        for (e = 0; e < E2; e++){
+            u = Eu_2[e]*K;
+            v = Ev_2[e]*K;
+            i = e*K;
+            for (k = 0; k < K; k++){
+                /* explicit step */
+                if (al == ZERO){ /* linear loss, grad = -Q */
+                    a = TWO*P[u] + W2*GaQ[u] - Zu[i];
+                    b = TWO*P[v] + W2*GaQ[v] - Zv[i];
+                }else if (al == ONE){ /* quadratic loss, grad = P - Q */
+                    a = TWO*P[u] - W2*GaQ[u]*(P[u] - Q2[u]) - Zu[i];
+                    b = TWO*P[v] - W2*GaQ[v]*(P[v] - Q2[v]) - Zv[i];
+                }else{ /* dKLa/dp_k = -(a/K + (1-a)q_k)(1-a)/(a/K + (1-a)p_k) */
+                    a = TWO*P[u] + W2*GaQ[u]/(al_K_al_1 + P[u]) - Zu[i];
+                    b = TWO*P[v] + W2*GaQ[v]/(al_K_al_1 + P[v]) - Zv[i];
+                }
+                /* implicit step */
+                if (al == ZERO){ /* weights are all 1/2 and thresholds are all 2 */
+                    c = HALF*(a + b); /* weighted average */
+                    a = a - b; /* finite difference */
+                    /* soft thresholding, update and relaxation */
+                    if (a > TWO){
+                        a = HALF*(a - TWO);
+                        Zu[i] += rho*(c + a - P[u]);
+                        Zv[i] += rho*(c - a - P[v]);
+                    }else if (a < -TWO){
+                        a = HALF*(a + TWO);
+                        Zu[i] += rho*(c + a - P[u]);
+                        Zv[i] += rho*(c - a - P[v]);
+                    }else{
+                        Zu[i] += rho*(c - P[u]);
+                        Zv[i] += rho*(c - P[v]);
+                    }
+                }else{
+                    c = W_d1u[i]*a + W_d1v[i]*b; /* weighted average */
+                    a = a - b; /* finite difference */
+                    /* soft thresholding, update and relaxation */
+                    if (a > Th_d1[i]){
+                        a -= Th_d1[i];
+                        Zu[i] += rho*(c + W_d1v[i]*a - P[u]);
+                        Zv[i] += rho*(c - W_d1u[i]*a - P[v]);
+                    }else if (a < -Th_d1[i]){
+                        a += Th_d1[i];
+                        Zu[i] += rho*(c + W_d1v[i]*a - P[u]);
+                        Zv[i] += rho*(c - W_d1u[i]*a - P[v]);
+                    }else{
+                        Zu[i] += rho*(c - P[u]);
+                        Zv[i] += rho*(c - P[v]);
+                    }
+                }
+                i++; u++; v++;
+            }
+        }
+        #pragma omp parallel for private(e, u, v, k, i, a, b, c) num_threads(ntEK3)
+        for (e = 0; e < E3; e++){
+            u = Eu_3[e]*K;
+            v = Ev_3[e]*K;
+            i = e*K;
+            for (k = 0; k < K; k++){
+                /* explicit step */
+                if (al == ZERO){ /* linear loss, grad = -Q */
+                    a = TWO*P[u] + W3*GaQ[u] - Zu[i];
+                    b = TWO*P[v] + W3*GaQ[v] - Zv[i];
+                }else if (al == ONE){ /* quadratic loss, grad = P - Q */
+                    a = TWO*P[u] - W3*GaQ[u]*(P[u] - Q3[u]) - Zu[i];
+                    b = TWO*P[v] - W3*GaQ[v]*(P[v] - Q3[v]) - Zv[i];
+                }else{ /* dKLa/dp_k = -(a/K + (1-a)q_k)(1-a)/(a/K + (1-a)p_k) */
+                    a = TWO*P[u] + W3*GaQ[u]/(al_K_al_1 + P[u]) - Zu[i];
+                    b = TWO*P[v] + W3*GaQ[v]/(al_K_al_1 + P[v]) - Zv[i];
                 }
                 /* implicit step */
                 if (al == ZERO){ /* weights are all 1/2 and thresholds are all 2 */
@@ -507,30 +997,46 @@ void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
             }
         }
 
-
         /** average **/
-        for (v = 0; v < V*K; v++){ P[v] = ZERO; }
+        for (v = 0; v < (V1+V2+V3)*K; v++){ P[v] = ZERO; }
         /* this task cannot be easily parallelized along the edges */
         #pragma omp parallel for private(k, e, i) num_threads(ntKE)
         for (k = 0; k < K; k++){
             i = k;
-            for (e = 0; e < E; e++){
-                P[Eu[e]*K+k] += Wu[i]*Zu[i];
-                P[Ev[e]*K+k] += Wv[i]*Zv[i];
+            for (e = 0; e < E1; e++){
+                P[Eu_1[e]*K+k] += Wu[i]*Zu[i];
+                P[Ev_1[e]*K+k] += Wv[i]*Zv[i];
+                i += K;
+            }
+        }
+        #pragma omp parallel for private(k, e, i) num_threads(ntKE)
+        for (k = 0; k < K; k++){
+            i = k;
+            for (e = 0; e < E2; e++){
+                P[Eu_2[e]*K+k] += Wu[i]*Zu[i];
+                P[Ev_2[e]*K+k] += Wv[i]*Zv[i];
+                i += K;
+            }
+        }
+        #pragma omp parallel for private(k, e, i) num_threads(ntKE)
+        for (k = 0; k < K; k++){
+            i = k;
+            for (e = 0; e < E3; e++){
+                P[Eu_3[e]*K+k] += Wu[i]*Zu[i];
+                P[Ev_3[e]*K+k] += Wv[i]*Zv[i];
                 i += K;
             }
         }
 
-
         /**  projection on simplex  **/
-        proj_simplex_metric<real>(P, Ga, K, V, V, &one, 1);
+        proj_simplex_metric<real>(P, Ga, K, V1+V2+V3, V1+V2+V3, &one, 1);
 
         /**  iterate evolution  **/
         if (difTol > ZERO || difRcd > ZERO || Dif != NULL){
             dif = ZERO;
             if (difTol >= ONE){
                 #pragma omp parallel for private(u, v, k, i, a) reduction(+:dif) num_threads(ntVK)
-                for (u = 0; u < V; u++){
+                for (u = 0; u < V1+V2+V3; u++){
                     v = u*K;
                     /* get maximum likelihood label */
                     a = P[v];
@@ -551,7 +1057,7 @@ void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
             }else{
                 /* max reduction available in C since OpenMP 3.1 and gcc 4.7 */
                 #pragma omp parallel for private(v, a) reduction(max:dif) num_threads(ntVK)
-                for (v = 0; v < V*K; v++){
+                for (v = 0; v < (V1+V2+V3)*K; v++){
                     a = P_[v] - P[v];
                     if (a < ZERO){ a = -a; }
                     if (a > dif){ dif = a; }
@@ -571,7 +1077,7 @@ void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
         for (k = 0; k < K; k++){ count_pos[k] = ZERO; }
 
         #pragma omp parallel for private(u, v, k, i, a) reduction(+:dif) num_threads(ntVK)
-        for(u=0; u < V; u++){
+        for(u=0; u < V1+V2+V3; u++){
             v=u*K;
             float x_pt=X[u];
             a = P[v];
@@ -593,7 +1099,7 @@ void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
         for (k = 0; k < K; k++){ count_ratio[k] = count_neg[k]/(TENTH+count_pos[k]); }
 
         #pragma omp parallel for private(u, v, k, i, a) reduction(+:dif) num_threads(ntVK)
-        for(u=0; u < V; u++){
+        for(u=0; u < V1+V2+V3; u++){
             v=u*K;
             float x_pt=X[u];
             a = P[v];
@@ -639,13 +1145,20 @@ void PFDR_graph_loss_d1_simplex(const int K, const int V, const int E, \
     free(P_);
 }
 
-/* instantiate for compilation */
-template void PFDR_graph_loss_d1_simplex<float>(const int, const int, const int, \
-        const float, float*, const float*, const float*, const int*, const int*, const float,\
-        const float*, const float, const float, float, const float, \
-        const int, int*, float*, float*, const int);
 
-template void PFDR_graph_loss_d1_simplex<double>(const int, const int, const int, \
-        const double, double*, const double*, const double*, const int*, const int*, const double, \
-        const double*, const double, const double, double, const double, \
-        const int, int*, double*, double*, const int);
+
+/* instantiate for compilation */
+template void PFDR_graph_loss_d1_simplex<float>(const int, const int, int*, int*, \
+    const float, float*, float**, float*, float*, \
+    int**, int**, const float, float**, \
+    const float, const float, \
+    float, const float, const int, int*, \
+    float*, float*, const int);
+
+template void PFDR_graph_loss_d1_simplex<double>(const int, const int, int*, int*, \
+    const double, double*, double**, double*, double*, \
+    int**, int**, const double, double**, \
+    const double, const double, \
+    double, const double, const int, int*, \
+    double*, double*, const int);
+

@@ -1,8 +1,4 @@
 %compile the MEX files for the methods required
-%---Loopy belief propagation-----------------------------------------------
-mex -Imex -outdir UGM/compiled UGM/mex/UGM_makeEdgeVEC.c
-mex -Imex -outdir UGM/compiled UGM/mex/UGM_Infer_LBPC.c
-mex -Imex -outdir UGM/compiled UGM/mex/UGM_Decode_LBPC.c
 %---PFDR-------------------------------------------------------------------
 mex CXXFLAGS="\$CXXFLAGS -DMEX -fopenmp"...
 LDFLAGS="\$LDFLAGS -fopenmp" ...

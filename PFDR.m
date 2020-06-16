@@ -1,4 +1,4 @@
-function p_regularized = PFDR(initial_p, graph, x_points, lambda, fidelity)
+function p_regularized = PFDR(all_data, lambda, fidelity)
 %Preconditonned Forward Douglas Radchford Algorithm to solve
 %TV penalized simplex bound energies
 %INPUT
@@ -23,30 +23,52 @@ function p_regularized = PFDR(initial_p, graph, x_points, lambda, fidelity)
 %and Convex Optimization.
 %Raguet, H. (2017).
 smoothing = 0.05;
-if (nargin < 3)
+if (nargin < 2)
     lambda = 1;
 end
-if (nargin < 4)
+if (nargin < 3)
     fidelity = 1;
 end
-nClasses  = size(initial_p,2);
+
+nChannels=numel(all_data);
+initial_p={};
+x_points={};
+graph_sources={};
+graph_targets={};
+graph_weights={};
+fidelity_weights={};
+
+for i=1:nChannels
+  initial_p{i}=all_data(i).initial_classif'; %double
+  x_points{i}=all_data(i).x_centroids'; %int64
+  graph_sources{i}=int32(all_data(i).graph.source); %int32
+  graph_targets{i}=int32(all_data(i).graph.target); %int32
+  graph_weights{i}=all_data(i).graph.edge_weight*lambda; %single
+  fidelity_weights{i}=all_data(i).weight;
+end
+
+nClasses  = size(initial_p{1},1);
+
 switch fidelity
     case 0
-       p_regularized = PFDR_graph_loss_d1_simplex_mex(initial_p',x_points', 0 ,...
-        int32(graph.source) ,  int32(graph.target)...
-        , graph.edge_weight * lambda, 1, 0.2, 1e-1, 1, 100, 0);
+       p_regularized = PFDR_graph_loss_d1_simplex_mex(initial_p,x_points,0.5, 0 ,...
+        graph_sources ,  graph_targets...
+        , graph_weights, fidelity_weights, 1, 0.2, 1e-1, 1, 100, 0);
      case 1
-       p_regularized = PFDR_graph_loss_d1_simplex_mex(initial_p',x_points', 1 ,...
-        int32(graph.source) ,  int32(graph.target)...
-        , graph.edge_weight * lambda, 1, 0.2, 1e-1, 1, 100, 0);
+       p_regularized = PFDR_graph_loss_d1_simplex_mex(initial_p,x_points,0.5, 1 ,...
+        graph_sources ,  graph_targets...
+        , graph_weights, fidelity_weights, 1, 0.2, 1e-1, 1, 100, 0);
     case 2
-      p_regularized = PFDR_graph_loss_d1_simplex_mex(initial_p',x_points', smoothing ,...
-        int32(graph.source) ,  int32(graph.target)...
-        , graph.edge_weight * lambda, 1, 0.2, 1e-1, 1, 100, 0);
+      p_regularized = PFDR_graph_loss_d1_simplex_mex(initial_p,x_points,0.5, smoothing ,...
+        graph_sources ,  graph_targets...
+        , graph_weights, fidelity_weights, 1, 0.2, 1e-1, 1, 100, 0);
     case 3
-       p_regularized = PFDR_graph_loss_d1_simplex_mex(log(initial_p' ...
-            * (1-smoothing + smoothing/nClasses)), x_points', 0, int32(graph.source)...
-            ,  int32(graph.target), graph.edge_weight * lambda ...
-            , 1, 0.2, 1e-1, 1, 200, 0);
+       for i=1:nChannels
+          %smoothing done
+          initial_p{i}=log(initial_p{i}*(1-smoothing  + smoothing/nClasses));
+        end
+       p_regularized = PFDR_graph_loss_d1_simplex_mex(initial_p, x_points, 0.5, 0,...
+        graph_sources ,  graph_targets...
+        , graph_weights, fidelity_weights, 1, 0.2, 1e-1, 1, 200, 0);
 end
     
